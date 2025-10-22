@@ -22,6 +22,7 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/metrics"
 	"go.opentelemetry.io/ebpf-profiler/nativeunwind"
 	"go.opentelemetry.io/ebpf-profiler/periodiccaller"
+	"go.opentelemetry.io/ebpf-profiler/process"
 	pmebpf "go.opentelemetry.io/ebpf-profiler/processmanager/ebpfapi"
 	eim "go.opentelemetry.io/ebpf-profiler/processmanager/execinfomanager"
 	"go.opentelemetry.io/ebpf-profiler/reporter"
@@ -185,6 +186,19 @@ func collectInterpreterMetrics(ctx context.Context, pm *ProcessManager,
 }
 
 func (pm *ProcessManager) Close() {
+}
+
+// NewFrameMapping creates a frame mapping from a process and mapping.
+// This is a public wrapper around the private newFrameMapping method.
+func (pm *ProcessManager) NewFrameMapping(pr process.Process, m *process.Mapping) error {
+	// Ensure processInfo exists before calling newFrameMapping
+	// (needed for assignLibcInfo to work)
+	pm.mu.Lock()
+	pm.getPidInformation(pr.PID(), pr)
+	pm.mu.Unlock()
+
+	_, err := pm.newFrameMapping(pr, m)
+	return err
 }
 
 func (pm *ProcessManager) symbolizeFrame(pid libpf.PID, bpfFrame *host.Frame, frames *libpf.Frames) error {
