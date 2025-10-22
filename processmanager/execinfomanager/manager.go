@@ -286,6 +286,31 @@ func (mgr *ExecutableInfoManager) UpdateMetricSummary(summary metrics.Summary) {
 	summary[metrics.IDStackDeltaProviderExtractionError] = metrics.MetricValue(deltaProviderStatistics.ExtractionErrors)
 }
 
+// A function to just get the interpreter.Data for a specific elf
+func (mgr *ExecutableInfoManager) DetectAndLoadInterpData(
+	path string) interpreter.Data {
+	// Get FileID from the path
+	libpfFileID, err := libpf.FileIDFromExecutableFile(path)
+	if err != nil {
+		log.Errorf("Failed to get FileID for %s: %v", path, err)
+		return nil
+	}
+
+	// Convert to host.FileID
+	fileID := host.FileIDFromLibpf(libpfFileID)
+
+	// Create pfelf.Reference using SystemOpener
+	elfRef := pfelf.NewReference(path, &pfelf.SystemOpener)
+
+	// Create LoaderInfo with empty gaps (no stack deltas needed for this use case)
+	loaderInfo := interpreter.NewLoaderInfo(fileID, elfRef, []util.Range{})
+
+	// Get the state and call detectAndLoadInterpData
+	state := mgr.state.RLock()
+	defer mgr.state.RUnlock(&state)
+	return state.detectAndLoadInterpData(loaderInfo)
+}
+
 type executableInfoManagerState struct {
 	// interpreterLoaders is a list of instances of an interface that provide functionality
 	// for loading the host agent support for a specific interpreter type.
