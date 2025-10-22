@@ -21,7 +21,9 @@ require (
 	github.com/klauspost/compress v1.18.1
 	github.com/mdlayher/kobject v0.0.0-20200520190114-19ca17470d7d
 	github.com/minio/sha256-simd v1.0.1
+	github.com/parinpan/magicjson v0.0.0-20240109095631-1d791998da1a
 	github.com/peterbourgon/ff/v3 v3.4.0
+	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.11.1
 	github.com/zeebo/xxh3 v1.0.2
 	go.opentelemetry.io/collector/component v1.46.1-0.20251126133452-974da01f7148
@@ -82,6 +84,10 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/tidwall/gjson v1.17.0 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.1 // indirect
+	github.com/tidwall/sjson v1.2.5 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/collector/component/componenttest v0.140.0 // indirect
 	go.opentelemetry.io/collector/confmap v1.46.0 // indirect
