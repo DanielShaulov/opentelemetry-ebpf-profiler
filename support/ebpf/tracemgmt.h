@@ -18,14 +18,8 @@
   // MULTI_USE_FUNC generates perf event and kprobe eBPF programs
   // for a given function.
   #define MULTI_USE_FUNC(func_name)                                                                \
-    SEC("perf_event/" #func_name)                                                                  \
-    static int EBPF_INLINE perf_##func_name(struct pt_regs *ctx)                                   \
-    {                                                                                              \
-      return func_name(ctx);                                                                       \
-    }                                                                                              \
-                                                                                                   \
-    SEC("kprobe/" #func_name)                                                                      \
-    static int EBPF_INLINE kprobe_##func_name(struct pt_regs *ctx)                                 \
+    SEC("tracepoint/" #func_name)                                                                  \
+    int EBPF_INLINE tracepoint_##func_name(struct pt_regs *ctx)                                    \
     {                                                                                              \
       return func_name(ctx);                                                                       \
     }
@@ -198,7 +192,7 @@ static inline EBPF_INLINE bool report_pid(void *ctx, u64 pid_tgid, int ratelimit
   // At this point, the PID was successfully written to maps/pid_events,
   // therefore there is no need to track success/failure of event_send_trigger
   // and we can simply return success.
-  event_send_trigger(ctx, EVENT_TYPE_GENERIC_PID);
+  // event_send_trigger(ctx, EVENT_TYPE_GENERIC_PID);
   return true;
 }
 
@@ -374,6 +368,7 @@ static inline EBPF_INLINE ErrorCode push_error(Trace *trace, ErrorCode error)
   return _push_with_max_frames(trace, 0, error, FRAME_MARKER_ABORT, 0, MAX_FRAME_UNWINDS);
 }
 
+#ifndef CUSTOM_SEND_TRACE
 // Send a trace to user-land via the `trace_events` perf event buffer.
 static inline EBPF_INLINE void send_trace(void *ctx, Trace *trace)
 {
@@ -386,6 +381,7 @@ static inline EBPF_INLINE void send_trace(void *ctx, Trace *trace)
 
   bpf_perf_event_output(ctx, &trace_events, BPF_F_CURRENT_CPU, trace, send_size);
 }
+#endif
 
 // is_kernel_address checks if the given address looks like virtual address to kernel memory.
 static inline EBPF_INLINE bool is_kernel_address(u64 addr)
@@ -638,12 +634,13 @@ copy_state_regs(UnwindState *state, struct pt_regs *regs, bool interrupted_kerne
 // the bpf_task_pt_regs() helper.
 static inline EBPF_INLINE long get_task_pt_regs(struct task_struct *task)
 {
-  u64 stack_ptr = (u64)task + task_stack_offset;
-  long stack_base;
-  if (bpf_probe_read_kernel(&stack_base, sizeof(stack_base), (void *)stack_ptr)) {
-    return 0;
-  }
-  return stack_base + stack_ptregs_offset;
+  return bpf_task_pt_regs(bpf_get_current_task_btf());
+  // u64 stack_ptr = (u64)task + task_stack_offset;
+  // long stack_base;
+  // if (bpf_probe_read_kernel(&stack_base, sizeof(stack_base), (void *)stack_ptr)) {
+  //   return 0;
+  // }
+  // return stack_base + stack_ptregs_offset;
 }
 
 // Determine whether the given pt_regs are from user-mode register context.
@@ -680,7 +677,7 @@ get_usermode_regs(struct pt_regs *ctx, UnwindState *state, bool *has_usermode_re
 {
   ErrorCode error;
 
-  if (!ptregs_is_usermode(ctx)) {
+  // if (!ptregs_is_usermode(ctx)) {
     // Use the current task's entry pt_regs
     struct task_struct *task = (struct task_struct *)bpf_get_current_task();
     long ptregs_addr         = get_task_pt_regs(task);
@@ -696,10 +693,10 @@ get_usermode_regs(struct pt_regs *ctx, UnwindState *state, bool *has_usermode_re
       return ERR_OK;
     }
     error = copy_state_regs(state, &regs, true);
-  } else {
-    // User mode code interrupted, registers are available via the ebpf context.
-    error = copy_state_regs(state, ctx, false);
-  }
+  // } else {
+  //   // User mode code interrupted, registers are available via the ebpf context.
+  //   error = copy_state_regs(state, ctx, false);
+  // }
   if (error == ERR_OK) {
     DEBUG_PRINT("Read regs: pc: %llx sp: %llx fp: %llx", state->pc, state->sp, state->fp);
     *has_usermode_regs = true;

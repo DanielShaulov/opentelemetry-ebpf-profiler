@@ -27,11 +27,18 @@ BPF_RODATA_VAR(u32, stack_ptregs_offset, 0)
 // outer map and an array as inner map that holds up to 2^X stack delta entries for the given
 // fileID.
 #define STACK_DELTA_BUCKET(X)                                                                      \
+  struct inner_map_##X {                                                                           \
+          __uint(type, BPF_MAP_TYPE_HASH);                                                         \
+          __uint(max_entries, 1 << X);                                                             \
+          __type(key, __u32);                                                                      \
+          __type(value, sizeof(StackDelta));                                                       \
+  };                                                                                               \
   struct exe_id_to_##X##_stack_deltas_t {                                                          \
     __uint(type, BPF_MAP_TYPE_HASH_OF_MAPS);                                                       \
     __type(key, u64);                                                                              \
     __type(value, u32);                                                                            \
     __uint(max_entries, 4096);                                                                     \
+    __array(values, struct inner_map_##X);                                                         \
   } exe_id_to_##X##_stack_deltas SEC(".maps");
 
 // Create buckets to hold the stack delta information for the executables.
@@ -652,19 +659,19 @@ static EBPF_INLINE int unwind_native(struct pt_regs *ctx)
   return -1;
 }
 
-SEC("perf_event/native_tracer_entry")
-int native_tracer_entry(struct bpf_perf_event_data *ctx)
-{
-  // Get the PID and TGID register.
-  u64 id  = bpf_get_current_pid_tgid();
-  u32 pid = id >> 32;
-  u32 tid = id & 0xFFFFFFFF;
+// SEC("perf_event/native_tracer_entry")
+// int native_tracer_entry(struct bpf_perf_event_data *ctx)
+// {
+//   // Get the PID and TGID register.
+//   u64 id  = bpf_get_current_pid_tgid();
+//   u32 pid = id >> 32;
+//   u32 tid = id & 0xFFFFFFFF;
 
-  if (pid == 0) {
-    return 0;
-  }
+//   if (pid == 0) {
+//     return 0;
+//   }
 
-  u64 ts = bpf_ktime_get_ns();
-  return collect_trace((struct pt_regs *)&ctx->regs, TRACE_SAMPLING, pid, tid, ts, 0);
-}
+//   u64 ts = bpf_ktime_get_ns();
+//   return collect_trace((struct pt_regs *)&ctx->regs, TRACE_SAMPLING, pid, tid, ts, 0);
+// }
 MULTI_USE_FUNC(unwind_native)
