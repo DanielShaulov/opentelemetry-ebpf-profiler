@@ -313,4 +313,4 @@ MULTI_USE_FUNC(unwind_stop)
 char _license[] SEC("license") = "GPL";
 // this number will be interpreted by the elf loader
 // to set the current running kernel version
-u32 _version SEC("version")    = 0xFFFFFFFE;
+// u32 _version SEC("version")    = 0xFFFFFFFE;

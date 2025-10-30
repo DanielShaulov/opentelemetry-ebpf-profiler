@@ -662,19 +662,19 @@ static EBPF_INLINE int unwind_native(struct pt_regs *ctx)
   return -1;
 }
 
-SEC("perf_event/native_tracer_entry")
-int native_tracer_entry(struct bpf_perf_event_data *ctx)
-{
-  // Get the PID and TGID register.
-  u64 id  = bpf_get_current_pid_tgid();
-  u32 pid = id >> 32;
-  u32 tid = id & 0xFFFFFFFF;
-
-  if (pid == 0 && filter_idle_frames) {
-    return 0;
-  }
-
-  u64 ts = bpf_ktime_get_ns();
-  return collect_trace((struct pt_regs *)&ctx->regs, TRACE_SAMPLING, pid, tid, ts, 0);
-}
+// SEC("perf_event/native_tracer_entry")
+// int native_tracer_entry(struct bpf_perf_event_data *ctx)
+// {
+//   // Get the PID and TGID register.
+//   u64 id  = bpf_get_current_pid_tgid();
+//   u32 pid = id >> 32;
+//   u32 tid = id & 0xFFFFFFFF;
+//
+//   if (pid == 0 && filter_idle_frames) {
+//     return 0;
+//   }
+//
+//   u64 ts = bpf_ktime_get_ns();
+//   return collect_trace((struct pt_regs *)&ctx->regs, TRACE_SAMPLING, pid, tid, ts, 0);
+// }
 MULTI_USE_FUNC(unwind_native)

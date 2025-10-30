@@ -122,7 +122,7 @@ func main() {
 
 	for _, f := range flag.Args() {
 		if err := analyzeFile(f, includeTracers); err != nil {
-			log.Errorf("%s: %s\n", f, err)
+			log.Fatalf("%s: %s\n", f, err)
 		}
 	}
 }

@@ -303,7 +303,8 @@ func (mgr *ExecutableInfoManager) DetectAndLoadInterpData(
 	elfRef := pfelf.NewReference(path, &pfelf.SystemOpener)
 
 	// Create LoaderInfo with empty gaps (no stack deltas needed for this use case)
-	loaderInfo := interpreter.NewLoaderInfo(fileID, elfRef, []util.Range{})
+	loaderInfo := interpreter.NewLoaderInfo(fileID, elfRef)
+	log.Errorf("loaderInfo.fileName: %s", loaderInfo.FileName())
 
 	// Get the state and call detectAndLoadInterpData
 	state := mgr.state.RLock()

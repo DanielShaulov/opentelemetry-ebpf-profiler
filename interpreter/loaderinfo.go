@@ -5,7 +5,9 @@ package interpreter // import "go.opentelemetry.io/ebpf-profiler/interpreter"
 
 import (
 	"fmt"
+	"os"
 
+	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/ebpf-profiler/host"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/libpf/pfelf"
@@ -58,5 +60,11 @@ func (i *LoaderInfo) FileID() host.FileID {
 
 // FileName returns the fileName  element of the LoaderInfo struct.
 func (i *LoaderInfo) FileName() string {
-	return i.elfRef.FileName()
+	name := i.elfRef.FileName()
+	path, err := os.Readlink(name)
+	if err != nil {
+		log.Errorf("Failed to eval symlinks: %s", err)
+		path = name
+	}
+	return path
 }
