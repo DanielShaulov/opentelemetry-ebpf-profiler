@@ -26,12 +26,15 @@ struct metrics_t {
   __uint(max_entries, metricID_Max);
 } metrics SEC(".maps");
 
+int EBPF_INLINE tracepoint_unwind_stop(struct pt_regs *ctx);
+
 // perf_progs maps from a program ID to a perf eBPF program
 struct perf_progs_t {
   __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
   __type(key, u32);
   __type(value, u32);
   __uint(max_entries, NUM_TRACER_PROGS);
+  __array(values, u32 (void *) );
 } perf_progs SEC(".maps");
 
 // report_events notifies user space about events (GENERIC_PID and TRACES_FOR_SYMBOLIZATION).
