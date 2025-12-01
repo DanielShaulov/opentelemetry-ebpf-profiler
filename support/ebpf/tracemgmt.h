@@ -748,8 +748,10 @@ static inline EBPF_INLINE int collect_trace(
   }
 
   // Get the kernel mode stack trace first
+#ifndef DISABLE_KERNEL_STACKTRACE
   trace->kernel_stack_id = bpf_get_stackid(ctx, &kernel_stackmap, BPF_F_REUSE_STACKID);
   DEBUG_PRINT("kernel stack id = %d", trace->kernel_stack_id);
+#endif
 
   if (pid == 0) {
     tail_call(ctx, PROG_UNWIND_STOP);
