@@ -18,14 +18,8 @@
   // MULTI_USE_FUNC generates perf event and kprobe eBPF programs
   // for a given function.
   #define MULTI_USE_FUNC(func_name)                                                                \
-    SEC("perf_event/" #func_name)                                                                  \
-    static int EBPF_INLINE perf_##func_name(struct pt_regs *ctx)                                   \
-    {                                                                                              \
-      return func_name(ctx);                                                                       \
-    }                                                                                              \
-                                                                                                   \
-    SEC("kprobe/" #func_name)                                                                      \
-    static int EBPF_INLINE kprobe_##func_name(struct pt_regs *ctx)                                 \
+    SEC("tracepoint/" #func_name)                                                                  \
+    int EBPF_INLINE tracepoint_##func_name(struct pt_regs *ctx)                                    \
     {                                                                                              \
       return func_name(ctx);                                                                       \
     }
@@ -683,7 +677,7 @@ get_usermode_regs(struct pt_regs *ctx, UnwindState *state, bool *has_usermode_re
 {
   ErrorCode error;
 
-  if (!ptregs_is_usermode(ctx)) {
+  // if (!ptregs_is_usermode(ctx)) {
     // Use the current task's entry pt_regs
     struct task_struct *task = (struct task_struct *)bpf_get_current_task();
     long ptregs_addr         = get_task_pt_regs(task);
@@ -699,10 +693,10 @@ get_usermode_regs(struct pt_regs *ctx, UnwindState *state, bool *has_usermode_re
       return ERR_OK;
     }
     error = copy_state_regs(state, &regs, true);
-  } else {
-    // User mode code interrupted, registers are available via the ebpf context.
-    error = copy_state_regs(state, ctx, false);
-  }
+  // } else {
+  //   // User mode code interrupted, registers are available via the ebpf context.
+  //   error = copy_state_regs(state, ctx, false);
+  // }
   if (error == ERR_OK) {
     DEBUG_PRINT("Read regs: pc: %llx sp: %llx fp: %llx", state->pc, state->sp, state->fp);
     *has_usermode_regs = true;

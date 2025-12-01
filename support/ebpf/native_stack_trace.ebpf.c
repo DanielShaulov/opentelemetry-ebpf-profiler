@@ -662,7 +662,7 @@ static EBPF_INLINE int unwind_native(struct pt_regs *ctx)
   return -1;
 }
 
-SEC("perf_event/native_tracer_entry")
+//SEC("perf_event/native_tracer_entry")
 int native_tracer_entry(struct bpf_perf_event_data *ctx)
 {
   // Get the PID and TGID register.
