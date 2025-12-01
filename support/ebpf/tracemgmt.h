@@ -642,12 +642,11 @@ copy_state_regs(UnwindState *state, struct pt_regs *regs, bool interrupted_kerne
 // the bpf_task_pt_regs() helper.
 static inline EBPF_INLINE long get_task_pt_regs(struct task_struct *task)
 {
-  u64 stack_ptr = (u64)task + task_stack_offset;
-  long stack_base;
-  if (bpf_probe_read_kernel(&stack_base, sizeof(stack_base), (void *)stack_ptr)) {
-    return 0;
-  }
-  return stack_base + stack_ptregs_offset;
+#ifdef BPF_CORE
+  return bpf_task_pt_regs(bpf_get_current_task_btf());
+#else
+  return 0;
+#endif
 }
 
 // Determine whether the given pt_regs are from user-mode register context.

@@ -41,17 +41,15 @@ static inline EBPF_INLINE int tsd_get_base(void **tsd_base)
 #else
   struct task_struct *task = (struct task_struct *)bpf_get_current_task();
 
-  // We need to read task->thread.fsbase (on x86_64), but we can't do so because
-  // we might have been compiled with different kernel headers, so the struct layout
-  // is likely to be different.
-  // tpbase_offset is populated with the offset of `fsbase` or equivalent field
-  // relative to a `task_struct`, so we use that instead.
-  void *tpbase_ptr = ((char *)task) + tpbase_offset;
-  if (bpf_probe_read_kernel(tsd_base, sizeof(void *), tpbase_ptr)) {
-    DEBUG_PRINT("Failed to read tpbase value");
-    increment_metric(metricID_UnwindErrBadTPBaseAddr);
+#ifdef BPF_CORE
+  #if defined(__aarch64__)
+    *tsd_base = (void *)BPF_CORE_READ(task, thread.uw.tp_value);
+  #elif defined(__x86_64__)
+    *tsd_base = (void *)BPF_CORE_READ(task, thread.fsbase);
+  #endif
+#else
     return -1;
-  }
+#endif
 
   return 0;
 #endif
