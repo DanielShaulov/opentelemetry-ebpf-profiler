@@ -170,6 +170,7 @@ static inline EBPF_INLINE bool pid_event_ratelimit(u32 pid, int ratelimit_action
   return false;
 }
 
+#ifndef CUSTOM_REPORT_PID
 // report_pid informs userspace about a PID that needs to be processed.
 // If inhibit is true, PID will first be checked against maps/reported_pids
 // and reporting aborted if PID has been recently reported.
@@ -201,6 +202,7 @@ static inline EBPF_INLINE bool report_pid(void *ctx, u64 pid_tgid, int ratelimit
   event_send_trigger(ctx, EVENT_TYPE_GENERIC_PID);
   return true;
 }
+#endif
 
 // Return the per-cpu record.
 // As each per-cpu array only has 1 entry, we hard-code 0 as the key.
@@ -374,6 +376,7 @@ static inline EBPF_INLINE ErrorCode push_error(Trace *trace, ErrorCode error)
   return _push_with_max_frames(trace, 0, error, FRAME_MARKER_ABORT, 0, MAX_FRAME_UNWINDS);
 }
 
+#ifndef CUSTOM_SEND_TRACE
 // Send a trace to user-land via the `trace_events` perf event buffer.
 static inline EBPF_INLINE void send_trace(void *ctx, Trace *trace)
 {
@@ -386,6 +389,7 @@ static inline EBPF_INLINE void send_trace(void *ctx, Trace *trace)
 
   bpf_perf_event_output(ctx, &trace_events, BPF_F_CURRENT_CPU, trace, send_size);
 }
+#endif
 
 // is_kernel_address checks if the given address looks like virtual address to kernel memory.
 static inline EBPF_INLINE bool is_kernel_address(u64 addr)
