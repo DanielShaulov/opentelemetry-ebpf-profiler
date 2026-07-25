@@ -233,10 +233,6 @@ type progLoaderHelper struct {
 	enable bool
 	// name of the eBPF program
 	name string
-	// progID defines the ID for the eBPF program that is used as key in the tailcallMap.
-	progID uint32
-	// noTailCallTarget indicates if this eBPF program should be added to the tailcallMap.
-	noTailCallTarget bool
 }
 
 // schedProcessFreeHookName returns the name of the tracepoint hook to use.
@@ -423,119 +419,37 @@ func initializeMapsAndPrograms(kmod *kallsyms.Module, cfg *Config, origins *orig
 		}
 	}
 
-	tailCallProgs := []progLoaderHelper{
+	// The unwinders are BPF global functions linked into the entry programs, so
+	// the entry programs are the only thing left to load. Which interpreters
+	// actually get unwound is decided at unwind time by the contents of
+	// interpreter_offsets and the stack deltas, and the loader only populates
+	// those for enabled interpreters.
+	entryProgs := []progLoaderHelper{
 		{
-			progID: uint32(support.ProgUnwindStop),
-			name:   "unwind_stop",
+			name:   schedProcessFreeHookName(libpf.MapKeysToSet(coll.Programs)),
 			enable: true,
 		},
 		{
-			progID: uint32(support.ProgUnwindNative),
-			name:   "unwind_native",
+			name:   "native_tracer_entry",
 			enable: true,
 		},
 		{
-			progID: uint32(support.ProgUnwindHotspot),
-			name:   "unwind_hotspot",
-			enable: !cfg.InterpretersConfig.Hotspot.IsDisabled(),
+			name:   "finish_task_switch",
+			enable: cfg.OffCPUThreshold > 0,
 		},
 		{
-			progID: uint32(support.ProgUnwindPerl),
-			name:   "unwind_perl",
-			enable: !cfg.InterpretersConfig.Perl.IsDisabled(),
+			name:   "tracepoint__sched_switch",
+			enable: cfg.OffCPUThreshold > 0,
 		},
 		{
-			progID: uint32(support.ProgUnwindPHP),
-			name:   "unwind_php",
-			enable: !cfg.InterpretersConfig.PHP.IsDisabled(),
-		},
-		{
-			progID: uint32(support.ProgUnwindPython),
-			name:   "unwind_python",
-			enable: !cfg.InterpretersConfig.Python.IsDisabled(),
-		},
-		{
-			progID: uint32(support.ProgUnwindRuby),
-			name:   "unwind_ruby",
-			enable: !cfg.InterpretersConfig.Ruby.IsDisabled(),
-		},
-		{
-			progID: uint32(support.ProgUnwindV8),
-			name:   "unwind_v8",
-			enable: !cfg.InterpretersConfig.V8.IsDisabled(),
-		},
-		{
-			progID: uint32(support.ProgUnwindDotnet),
-			name:   "unwind_dotnet",
-			enable: !cfg.InterpretersConfig.Dotnet.IsDisabled(),
-		},
-		{
-			progID: uint32(support.ProgUnwindDotnet10),
-			name:   "unwind_dotnet10",
-			enable: !cfg.InterpretersConfig.Dotnet.IsDisabled(),
-		},
-		{
-			progID: uint32(support.ProgGoLabels),
-			name:   "go_labels",
-			enable: !cfg.InterpretersConfig.Go.IsLabelsDisabled(),
-		},
-		{
-			progID: uint32(support.ProgUnwindBEAM),
-			name:   "unwind_beam",
-			enable: !cfg.InterpretersConfig.BEAM.IsDisabled(),
+			name:   genericProgName,
+			enable: len(cfg.ProbeLinks) > 0 || cfg.LoadProbe,
 		},
 	}
 
-	if err = loadPerfUnwinders(coll, ebpfProgs, ebpfMaps["perf_progs"], tailCallProgs,
+	if err = loadPrograms(coll, ebpfProgs, entryProgs,
 		cfg.BPFVerifierLogLevel); err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to load perf eBPF programs: %v", err)
-	}
-
-	if cfg.OffCPUThreshold > 0 || len(cfg.ProbeLinks) > 0 || cfg.LoadProbe {
-		// Load the tail call destinations if any kind of event profiling is enabled.
-		// loadProbeUnwinders repoints the probe unwinder's per_cpu_records references
-		// to per_cpu_records_kp so a perf sampler can't clobber an in-flight uprobe unwind;
-		// the perf unwinder keeps per_cpu_records.
-		if err = loadProbeUnwinders(coll, ebpfProgs, ebpfMaps["kprobe_progs"], tailCallProgs,
-			cfg.BPFVerifierLogLevel, ebpfMaps["perf_progs"].FD(),
-			ebpfMaps["per_cpu_records"].FD(), ebpfMaps["per_cpu_records_kp"]); err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to load kprobe eBPF programs: %v", err)
-		}
-	}
-
-	if cfg.OffCPUThreshold > 0 {
-		offCPUProgs := []progLoaderHelper{
-			{
-				name:             "finish_task_switch",
-				noTailCallTarget: true,
-				enable:           true,
-			},
-			{
-				name:             "tracepoint__sched_switch",
-				noTailCallTarget: true,
-				enable:           true,
-			},
-		}
-		if err = loadProbeUnwinders(coll, ebpfProgs, ebpfMaps["kprobe_progs"], offCPUProgs,
-			cfg.BPFVerifierLogLevel, ebpfMaps["perf_progs"].FD(),
-			ebpfMaps["per_cpu_records"].FD(), ebpfMaps["per_cpu_records_kp"]); err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to load kprobe eBPF programs: %v", err)
-		}
-	}
-
-	if len(cfg.ProbeLinks) > 0 || cfg.LoadProbe {
-		probeProgs := []progLoaderHelper{
-			{
-				name:             genericProgName,
-				noTailCallTarget: true,
-				enable:           true,
-			},
-		}
-		if err = loadProbeUnwinders(coll, ebpfProgs, ebpfMaps["kprobe_progs"], probeProgs,
-			cfg.BPFVerifierLogLevel, ebpfMaps["perf_progs"].FD(),
-			ebpfMaps["per_cpu_records"].FD(), ebpfMaps["per_cpu_records_kp"]); err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to load uprobe eBPF programs: %v", err)
-		}
+		return nil, nil, nil, fmt.Errorf("failed to load eBPF programs: %v", err)
 	}
 
 	if err = removeTemporaryMaps(ebpfMaps); err != nil {
@@ -804,48 +718,29 @@ func schedTimesSize(threshold uint32) uint32 {
 	return size
 }
 
-// loadPerfUnwinders loads all perf eBPF Programs and their tail call targets.
-func loadPerfUnwinders(coll *cebpf.CollectionSpec, ebpfProgs map[string]*cebpf.Program,
-	tailcallMap *cebpf.Map, tailCallProgs []progLoaderHelper,
-	bpfVerifierLogLevel uint32,
+// loadPrograms loads the given eBPF entry point programs.
+//
+// There is nothing to load beyond these: the unwinders are BPF global functions
+// that the loader pulls in as part of whichever entry program calls them, rather
+// than separate programs reached through a tail call map.
+func loadPrograms(coll *cebpf.CollectionSpec, ebpfProgs map[string]*cebpf.Program,
+	progs []progLoaderHelper, bpfVerifierLogLevel uint32,
 ) error {
 	programOptions := cebpf.ProgramOptions{
 		LogLevel: cebpf.LogLevel(bpfVerifierLogLevel),
 	}
 
-	progs := make([]progLoaderHelper, len(tailCallProgs)+2)
-	copy(progs, tailCallProgs)
-
-	schedProcessFree := schedProcessFreeHookName(libpf.MapKeysToSet(coll.Programs))
-	progs = append(progs,
-		progLoaderHelper{
-			name:             schedProcessFree,
-			noTailCallTarget: true,
-			enable:           true,
-		},
-		progLoaderHelper{
-			name:             "native_tracer_entry",
-			noTailCallTarget: true,
-			enable:           true,
-		})
-
-	for _, unwindProg := range progs {
-		if !unwindProg.enable {
+	for _, prog := range progs {
+		if !prog.enable {
 			continue
 		}
 
-		unwindProgName := unwindProg.name
-		if !unwindProg.noTailCallTarget {
-			unwindProgName = "perf_" + unwindProg.name
-		}
-
-		progSpec, ok := coll.Programs[unwindProgName]
+		progSpec, ok := coll.Programs[prog.name]
 		if !ok {
-			return fmt.Errorf("program %s does not exist", unwindProgName)
+			return fmt.Errorf("program %s does not exist", prog.name)
 		}
 
-		if err := loadProgram(ebpfProgs, tailcallMap, unwindProg.progID, progSpec,
-			programOptions, unwindProg.noTailCallTarget); err != nil {
+		if err := loadProgram(ebpfProgs, progSpec, programOptions); err != nil {
 			return err
 		}
 	}
@@ -853,82 +748,9 @@ func loadPerfUnwinders(coll *cebpf.CollectionSpec, ebpfProgs map[string]*cebpf.P
 	return nil
 }
 
-// progArrayReferences returns a list of instructions which load a specified tail
-// call FD.
-func progArrayReferences(perfTailCallMapFD int, insns asm.Instructions) []int {
-	insNos := []int{}
-	for i := range insns {
-		ins := &insns[i]
-		if asm.OpCode(ins.OpCode.Class()) != asm.OpCode(asm.LdClass) {
-			continue
-		}
-		m := ins.Map()
-		if m == nil {
-			continue
-		}
-		if perfTailCallMapFD == m.FD() {
-			insNos = append(insNos, i)
-		}
-	}
-	return insNos
-}
-
-// loadProbeUnwinders reuses large parts of loadPerfUnwinders. By default all eBPF programs
-// are written as perf event eBPF programs. loadProbeUnwinders dynamically rewrites the
-// specification of these programs to xProbe eBPF programs and adjusts tail call maps.
-func loadProbeUnwinders(coll *cebpf.CollectionSpec, ebpfProgs map[string]*cebpf.Program,
-	tailcallMap *cebpf.Map, progs []progLoaderHelper,
-	bpfVerifierLogLevel uint32, perfTailCallMapFD int,
-	perCPURecordsFD int, perCPURecordsKprobeMap *cebpf.Map,
-) error {
-	programOptions := cebpf.ProgramOptions{
-		LogLevel: cebpf.LogLevel(bpfVerifierLogLevel),
-	}
-
-	for _, unwindProg := range progs {
-		if !unwindProg.enable {
-			continue
-		}
-
-		unwindProgName := unwindProg.name
-		if !unwindProg.noTailCallTarget {
-			unwindProgName = "kprobe_" + unwindProg.name
-		}
-
-		progSpec, ok := coll.Programs[unwindProgName]
-		if !ok {
-			return fmt.Errorf("program %s does not exist", unwindProgName)
-		}
-
-		// Replace the prog array for the tail calls.
-		insns := progArrayReferences(perfTailCallMapFD, progSpec.Instructions)
-		for _, ins := range insns {
-			if err := progSpec.Instructions[ins].AssociateMap(tailcallMap); err != nil {
-				return fmt.Errorf("failed to rewrite map ptr: %v", err)
-			}
-		}
-
-		// Repoint per_cpu_records to the probe unwinder's own record map.
-		recInsns := progArrayReferences(perCPURecordsFD, progSpec.Instructions)
-		for _, ins := range recInsns {
-			if err := progSpec.Instructions[ins].AssociateMap(perCPURecordsKprobeMap); err != nil {
-				return fmt.Errorf("failed to rewrite per_cpu_records ptr: %v", err)
-			}
-		}
-
-		if err := loadProgram(ebpfProgs, tailcallMap, unwindProg.progID, progSpec,
-			programOptions, unwindProg.noTailCallTarget); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// loadProgram loads an eBPF program from progSpec and populates the related maps.
-func loadProgram(ebpfProgs map[string]*cebpf.Program, tailcallMap *cebpf.Map,
-	progID uint32, progSpec *cebpf.ProgramSpec, programOptions cebpf.ProgramOptions,
-	noTailCallTarget bool,
+// loadProgram loads an eBPF program from progSpec.
+func loadProgram(ebpfProgs map[string]*cebpf.Program,
+	progSpec *cebpf.ProgramSpec, programOptions cebpf.ProgramOptions,
 ) error {
 	restoreRlimit, err := rlimit.MaximizeMemlock()
 	if err != nil {
@@ -956,17 +778,6 @@ func loadProgram(ebpfProgs map[string]*cebpf.Program, tailcallMap *cebpf.Map,
 	}
 	ebpfProgs[progSpec.Name] = unwinder
 
-	if noTailCallTarget {
-		return nil
-	}
-	fd := uint32(unwinder.FD())
-	if err := tailcallMap.Update(unsafe.Pointer(&progID), unsafe.Pointer(&fd),
-		cebpf.UpdateAny); err != nil {
-		// Every eBPF program that is loaded within loadUnwinders can be the
-		// destination of a tail call of another eBPF program. If we can not update
-		// the eBPF map that manages these destinations our unwinding will fail.
-		return fmt.Errorf("failed to update tailcall map: %v", err)
-	}
 	return nil
 }
 

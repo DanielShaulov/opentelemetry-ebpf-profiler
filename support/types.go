@@ -459,7 +459,7 @@ var MetricsTranslation = []metrics.MetricID{
 	0x41: metrics.IDNumUnknownPC,
 	0x42: metrics.IDNumGenericPID,
 	0x43: metrics.IDUnwindPythonErrBadCFrameFrameAddr,
-	0x44: metrics.IDMaxTailCalls,
+	0x44: metrics.IDMaxUnwindIterations,
 	0x45: metrics.IDUnwindPythonErrNoProcInfo,
 	0x46: metrics.IDUnwindPythonErrBadAutoTlsKeyAddr,
 	0x47: metrics.IDUnwindPythonErrReadThreadStateAddr,

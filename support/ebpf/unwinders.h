@@ -64,9 +64,13 @@ EBPF_GLOBAL int trace_send(u32 rec_idx);
 //
 // A switch rather than an indirect call: BPF has no function pointers, and the
 // verifier needs to see every call target statically to check the stack depth of
-// the whole chain. Unwinders that the loader did not enable are dropped from
-// this switch by the interpreter_enabled_* defines, which keeps the unused ones
-// out of the blob and out of the verifier's work.
+// the whole chain.
+//
+// Every unwinder appears here whether or not its interpreter is enabled, unlike
+// the program array this replaces, which only held the enabled ones. Disabling
+// still works because nothing reaches an unwinder unless the loader has put an
+// entry for it in interpreter_offsets or in a stack delta; the cost is that a
+// disabled interpreter's unwinder is still verified at load time.
 static inline EBPF_INLINE int unwind_dispatch(int unwinder, u32 rec_idx)
 {
   // clang-format off

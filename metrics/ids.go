@@ -488,8 +488,8 @@ const (
 	// Number of failures to read _PyCFrame.current_frame in unwind_python()
 	IDUnwindPythonErrBadCFrameFrameAddr = 228
 
-	// Number of times stack unwinding was stopped to not hit the limit of tail calls
-	IDMaxTailCalls = 229
+	// Number of times stack unwinding was stopped after reaching the maximum number of unwinder invocations for a single trace
+	IDMaxUnwindIterations = 229
 
 	// Indicates if probabilistic profiling is enabled or disabled: 1 profiling is enabled, -1 profiling is disabled.
 	IDProbProfilingStatus = 230

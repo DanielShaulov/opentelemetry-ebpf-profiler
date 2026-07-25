@@ -268,7 +268,7 @@ var MetricsTranslation = []metrics.MetricID{
 	C.metricID_NumUnknownPC:                               metrics.IDNumUnknownPC,
 	C.metricID_NumGenericPID:                              metrics.IDNumGenericPID,
 	C.metricID_UnwindPythonErrBadCFrameFrameAddr:          metrics.IDUnwindPythonErrBadCFrameFrameAddr,
-	C.metricID_MaxTailCalls:                               metrics.IDMaxTailCalls,
+	C.metricID_MaxUnwindIterations:                        metrics.IDMaxUnwindIterations,
 	C.metricID_UnwindPythonErrNoProcInfo:                  metrics.IDUnwindPythonErrNoProcInfo,
 	C.metricID_UnwindPythonErrBadAutoTlsKeyAddr:           metrics.IDUnwindPythonErrBadAutoTlsKeyAddr,
 	C.metricID_UnwindPythonErrReadThreadStateAddr:         metrics.IDUnwindPythonErrReadThreadStateAddr,

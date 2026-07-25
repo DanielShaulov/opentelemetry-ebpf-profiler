@@ -3,13 +3,11 @@
 
 #define TESTING_COREDUMP
 #include "../../support/ebpf/types.h"
-#include <setjmp.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 
 struct cgo_ctx {
-  jmp_buf jmpbuf;
   u64 id, tp_base;
   int ret;
   int debug;
@@ -66,10 +64,8 @@ int unwind_traces(u64 id, int debug, u64 tp_base, void *ctx)
   cgoctx.debug   = debug;
   cgoctx.tp_base = tp_base;
   __cgo_ctx      = &cgoctx;
-  if (setjmp(cgoctx.jmpbuf) == 0) {
-    cgoctx.ret = native_tracer_entry(ctx);
-  }
-  __cgo_ctx = 0;
+  cgoctx.ret     = native_tracer_entry(ctx);
+  __cgo_ctx      = 0;
   return cgoctx.ret;
 }
 
@@ -86,27 +82,4 @@ long bpf_ringbuf_output(UNUSED void *ringbuf, void *data, UNUSED u64 size, UNUSE
   void __bpf_copy_frame(u64, void *);
   __bpf_copy_frame(__cgo_ctx->id, data);
   return 0;
-}
-
-int bpf_tail_call(void *ctx, UNUSED void *map, int index)
-{
-  int rc = 0;
-  switch (index) {
-  case PROG_UNWIND_STOP: rc = unwind_stop(ctx); break;
-  case PROG_UNWIND_NATIVE: rc = unwind_native(ctx); break;
-  case PROG_UNWIND_PERL: rc = unwind_perl(ctx); break;
-  case PROG_UNWIND_PHP: rc = unwind_php(ctx); break;
-  case PROG_UNWIND_PYTHON: rc = unwind_python(ctx); break;
-  case PROG_UNWIND_HOTSPOT: rc = unwind_hotspot(ctx); break;
-  case PROG_UNWIND_RUBY: rc = unwind_ruby(ctx); break;
-  case PROG_UNWIND_V8: rc = unwind_v8(ctx); break;
-  case PROG_UNWIND_DOTNET: rc = unwind_dotnet(ctx); break;
-  case PROG_UNWIND_DOTNET10: rc = unwind_dotnet10(ctx); break;
-  case PROG_UNWIND_BEAM: rc = unwind_beam(ctx); break;
-  case PROG_UNWIND_LUAJIT: rc = unwind_luajit(ctx); break;
-  case PROG_GO_LABELS: rc = go_labels(ctx); break;
-  default: return -1;
-  }
-  __cgo_ctx->ret = rc;
-  longjmp(__cgo_ctx->jmpbuf, 1);
 }
