@@ -2,4 +2,3 @@
 ebpf/*.bc
 ebpf/tracer.ebpf.debug.amd64
 ebpf/tracer.ebpf.debug.arm64
-*.bc

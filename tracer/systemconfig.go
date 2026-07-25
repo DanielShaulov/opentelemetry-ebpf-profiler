@@ -422,14 +422,12 @@ func probeVMALookupSupport(cfg *Config) (bool, string) {
 func disableVMAHelperCalls(coll *cebpf.CollectionSpec) int {
 	patched := 0
 	for _, progSpec := range coll.Programs {
-		programPatched := false
 		vmaCallbackPatched := false
 		for i := range progSpec.Instructions {
 			ins := &progSpec.Instructions[i]
 			if ins.IsLoadOfFunctionPointer() && strings.HasPrefix(ins.Reference(), "find_vma_callback") {
 				progSpec.Instructions[i] = asm.LoadImm(ins.Dst, 0, asm.DWord)
 				patched++
-				programPatched = true
 				vmaCallbackPatched = true
 				continue
 			}
@@ -443,7 +441,6 @@ func disableVMAHelperCalls(coll *cebpf.CollectionSpec) int {
 				// Return NULL if it is reached anyway.
 				progSpec.Instructions[i] = asm.Mov.Imm(asm.R0, 0).WithMetadata(ins.Metadata)
 				patched++
-				programPatched = true
 			case asm.FnFindVma:
 				// Older kernels reject programs that call unsupported helpers even when
 				// the runtime branch is disabled. Return -ENOTSUP if reached so the
@@ -451,10 +448,9 @@ func disableVMAHelperCalls(coll *cebpf.CollectionSpec) int {
 				progSpec.Instructions[i] = asm.Mov.Imm(asm.R0, -int32(unix.ENOTSUP)).
 					WithMetadata(ins.Metadata)
 				patched++
-				programPatched = true
 			}
 		}
-		if programPatched && vmaCallbackPatched {
+		if vmaCallbackPatched {
 			// The load of the callback's address is what made it a subprogram, so
 			// with that gone its instructions are unreachable. They have to go
 			// too: on kernels without BPF_PSEUDO_FUNC nothing marks them as a
