@@ -873,6 +873,12 @@ typedef struct PerCPURecord {
 #elif defined(__aarch64__)
     u64 rt_regs[34];
 #endif
+    // Entry pt_regs for get_usermode_regs, used when the interrupted context was
+    // in kernel mode and the user mode registers have to be read from the task's
+    // entry stack. Kept out of the entry program's stack frame: that frame is
+    // shared with the unwinder global functions it calls, and struct pt_regs on
+    // its own is a third of the 512 byte budget.
+    struct pt_regs entryRegs;
   };
   // Mask to indicate which unwinders are complete
   u32 unwindersDone;

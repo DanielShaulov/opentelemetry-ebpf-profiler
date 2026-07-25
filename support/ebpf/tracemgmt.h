@@ -875,8 +875,9 @@ static inline EBPF_INLINE bool ptregs_is_usermode(struct pt_regs *regs)
 // context was found: not every thread that we interrupt will actually have
 // a user-mode context (e.g. kernel worker threads won't).
 static inline EBPF_INLINE ErrorCode
-get_usermode_regs(struct pt_regs *ctx, UnwindState *state, bool *has_usermode_regs)
+get_usermode_regs(struct pt_regs *ctx, PerCPURecord *record, bool *has_usermode_regs)
 {
+  UnwindState *state = &record->state;
   ErrorCode error;
 
   if (!ptregs_is_usermode(ctx)) {
@@ -884,17 +885,17 @@ get_usermode_regs(struct pt_regs *ctx, UnwindState *state, bool *has_usermode_re
     struct task_struct *task = (struct task_struct *)bpf_get_current_task();
     long ptregs_addr         = get_task_pt_regs(task);
 
-    struct pt_regs regs;
-    if (!ptregs_addr || bpf_probe_read_kernel(&regs, sizeof(regs), (void *)ptregs_addr)) {
+    struct pt_regs *regs = &record->entryRegs;
+    if (!ptregs_addr || bpf_probe_read_kernel(regs, sizeof(*regs), (void *)ptregs_addr)) {
       increment_metric(metricID_UnwindNativeErrReadKernelModeRegs);
       return ERR_NATIVE_READ_KERNELMODE_REGS;
     }
 
-    if (!ptregs_is_usermode(&regs)) {
+    if (!ptregs_is_usermode(regs)) {
       // No usermode registers context found.
       return ERR_OK;
     }
-    error = copy_state_regs(state, &regs, true);
+    error = copy_state_regs(state, regs, true);
   } else {
     // User mode code interrupted, registers are available via the ebpf context.
     error = copy_state_regs(state, ctx, false);
@@ -908,10 +909,10 @@ get_usermode_regs(struct pt_regs *ctx, UnwindState *state, bool *has_usermode_re
 #else // TESTING_COREDUMP
 
 static inline EBPF_INLINE ErrorCode
-get_usermode_regs(struct pt_regs *ctx, UnwindState *state, bool *has_usermode_regs)
+get_usermode_regs(struct pt_regs *ctx, PerCPURecord *record, bool *has_usermode_regs)
 {
   // Coredumps provide always usermode pt_regs directly.
-  ErrorCode error = copy_state_regs(state, ctx, false);
+  ErrorCode error = copy_state_regs(&record->state, ctx, false);
   if (error == ERR_OK) {
     *has_usermode_regs = true;
   }
@@ -963,7 +964,7 @@ collect_trace(struct pt_regs *ctx, u16 origin, u32 pid, u32 tid, u64 trace_times
   // Recursive unwind frames
   int unwinder           = PROG_UNWIND_STOP;
   bool has_usermode_regs = false;
-  ErrorCode error        = get_usermode_regs(ctx, &record->state, &has_usermode_regs);
+  ErrorCode error        = get_usermode_regs(ctx, record, &has_usermode_regs);
   if (error || !has_usermode_regs) {
     goto exit;
   }
