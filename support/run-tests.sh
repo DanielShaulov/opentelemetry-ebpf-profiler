@@ -42,7 +42,10 @@ done < <(find . -name '*.test' -print0)
 additionalQemuArgs=""
 
 supportKVM=$(grep -E 'vmx|svm' /proc/cpuinfo || true)
-if [ -n "$supportKVM" ] && [ "$qemu_arch" = "$(uname -m)" ]; then
+# /proc/cpuinfo only tells us the CPU is capable. Containers and nested-virt
+# runners frequently expose the flags without exposing /dev/kvm, and qemu aborts
+# on -enable-kvm when the device is missing.
+if [ -n "$supportKVM" ] && [ -e /dev/kvm ] && [ "$qemu_arch" = "$(uname -m)" ]; then
   additionalQemuArgs="-enable-kvm"
 fi
 
