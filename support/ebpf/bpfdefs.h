@@ -30,6 +30,7 @@ extern u32 with_debug_output;
   // dispatch the BPF API to helpers implemented in ebpfhelpers.go.
   #define SEC(NAME)
   #define EBPF_INLINE
+  #define EBPF_GLOBAL
 
   #define printt(fmt, ...)      bpf_log(fmt, ##__VA_ARGS__)
   #define DEBUG_PRINT(fmt, ...) bpf_log(fmt, ##__VA_ARGS__)
@@ -199,6 +200,23 @@ static long (*bpf_send_signal_thread)(u32 sig) = (void *)BPF_FUNC_send_signal_th
     _Pragma("GCC diagnostic push") _Pragma("GCC diagnostic ignored \"-Wignored-attributes\"")      \
       __attribute__((section(name), used)) _Pragma("GCC diagnostic pop")
   #define EBPF_INLINE __attribute__((__always_inline__))
+
+  // EBPF_GLOBAL marks a BPF global function: an externally linked function that
+  // the verifier checks once on its own instead of re-walking it at every call
+  // site (function-by-function verification, Linux 5.6+). Keeping the unwinders
+  // out of the caller's verification budget is what lets them all live in one
+  // program instead of one program per unwinder.
+  //
+  // The verifier knows nothing about the caller when it checks one of these,
+  // which constrains them in two ways. Arguments may only be scalars or a
+  // pointer to the program context, and a context pointer has to match the
+  // program type exactly on 5.10, so the unwinders take scalars only. Their
+  // stack also shares the 512 byte budget with every other frame on the call
+  // path rather than getting a fresh one the way a tail call target does.
+  //
+  // noinline is required: at -O2 clang would otherwise fold a global function
+  // back into a caller in the same translation unit.
+  #define EBPF_GLOBAL __attribute__((noinline))
 
 #endif // !TESTING_COREDUMP
 

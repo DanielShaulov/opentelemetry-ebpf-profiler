@@ -23,6 +23,9 @@ TARGET_ARCH ?= $(NATIVE_ARCH)
 
 TRACER_NAME ?= tracer.ebpf.$(TARGET_ARCH)
 
+# BPF instruction set version the blob is generated for.
+BPF_CPU ?= v2
+
 ifeq ($(TARGET_ARCH),arm64)
 TARGET_FLAGS = -target aarch64-linux-gnu
 else
@@ -68,12 +71,15 @@ errors.h: ../../tools/errors-codegen/errors.json
 	$(BPF_CLANG) $(FLAGS) -MMD -MP -o $@
 
 $(TRACER_NAME): $(OBJS)
-	$(BPF_LINK) $^ -o - | $(LLC) -march=bpf -mcpu=v2 -filetype=obj -o $@
+	$(BPF_LINK) $^ -o $(TRACER_NAME).bc
+	$(LLC) -march=bpf -mcpu=$(BPF_CPU) -filetype=obj -o $@ $(TRACER_NAME).bc
 	# With the compile flag -g not only the btf section is added to the
 	# binary but also additional debug sections. As these debug sections
 	# are not relevant for BPF and increase the binary size remove them here.
 	$(STRIP) --strip-debug --enable-deterministic-archives $@
 	@./print_instruction_count.sh $@
+	@LLC=$(LLC) ./check_stack_usage.sh $(TRACER_NAME).bc $(BPF_CPU)
+	@rm -f $(TRACER_NAME).bc
 
 baseline: $(TRACER_NAME)
 	cp $< $(TRACER_NAME).$@
@@ -88,6 +94,6 @@ format:
 	$(CLANG_FORMAT) -i -style=file *.[ch] ../../tools/coredump/*.[ch]
 
 clean:
-	rm -f *.o *.d
+	rm -f *.o *.d *.bc
 
 -include $(DEPS)
