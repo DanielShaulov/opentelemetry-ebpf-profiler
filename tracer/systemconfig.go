@@ -454,12 +454,23 @@ func disableVMAHelperCalls(coll *cebpf.CollectionSpec) int {
 				programPatched = true
 			}
 		}
-		if programPatched {
-			if vmaCallbackPatched {
-				progSpec.Instructions = removeSubprogramsBySymbolPrefix(
-					progSpec.Instructions, "find_vma_callback")
-			}
-			stripProgramExtInfos(progSpec.Instructions)
+		if programPatched && vmaCallbackPatched {
+			// The load of the callback's address is what made it a subprogram, so
+			// with that gone its instructions are unreachable. They have to go
+			// too: on kernels without BPF_PSEUDO_FUNC nothing marks them as a
+			// subprogram any more, and the func_info record that still describes
+			// them is then one more than the verifier counts, which it rejects
+			// with "number of funcs in func_info doesn't match number of
+			// subprogs".
+			//
+			// The rest of the ext infos have to stay. Dropping func_info costs
+			// the unwinders their BTF_FUNC_GLOBAL linkage, which is what tells
+			// the verifier to check each of them once on its own; without it
+			// every unwinder is re-walked at every dispatch in unwind_loop and
+			// the program blows past the one million instruction complexity
+			// limit.
+			progSpec.Instructions = removeSubprogramsBySymbolPrefix(
+				progSpec.Instructions, "find_vma_callback")
 		}
 	}
 	return patched
@@ -480,42 +491,13 @@ func removeSubprogramsBySymbolPrefix(insns asm.Instructions, prefix string) asm.
 	return out
 }
 
-func stripProgramExtInfos(insns asm.Instructions) {
-	iter := insns.Iterate()
-	for iter.Next() {
-		if btf.FuncMetadata(iter.Ins) == nil && iter.Ins.Source() == nil {
-			continue
-		}
-
-		sym := iter.Ins.Symbol()
-		ref := iter.Ins.Reference()
-		iter.Ins.Metadata = asm.Metadata{}
-		if sym != "" {
-			*iter.Ins = iter.Ins.WithSymbol(sym)
-		}
-		if ref != "" {
-			*iter.Ins = iter.Ins.WithReference(ref)
-		}
-	}
-}
-
 // loadRodataVars initializes RODATA variables for the eBPF programs.
 func loadRodataVars(coll *cebpf.CollectionSpec, kmod *kallsyms.Module, cfg *Config,
-	major, minor uint32, origins *originRegistry,
+	origins *originRegistry,
 ) error {
 	if cfg.VerboseMode {
 		if err := coll.Variables["with_debug_output"].Set(uint32(1)); err != nil {
 			return fmt.Errorf("failed to set debug output: %v", err)
-		}
-	}
-
-	// The Python/native hybrid unwinder's per program loop count defaults to 10
-	// which is the largest that fits the 5.x / 6.0-6.5 verifier. Kernels 6.6+ are
-	// more efficient and can support more, but 6.18's verifier is tighter than
-	// 6.6-6.16; 15 fits the floor across the 6.6+ CI matrix.
-	if major > 6 || (major == 6 && minor >= 6) {
-		if err := coll.Variables["python_frames_per_program"].Set(uint32(15)); err != nil {
-			return fmt.Errorf("failed to set python_frames_per_program: %v", err)
 		}
 	}
 

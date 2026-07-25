@@ -9,8 +9,12 @@
 #define STACK_DELTA_INVALID (STACK_DELTA_COMMAND_FLAG | UNWIND_COMMAND_INVALID)
 #define STACK_DELTA_STOP    (STACK_DELTA_COMMAND_FLAG | UNWIND_COMMAND_STOP)
 
-// The number of native frames to unwind per frame-unwinding eBPF program.
-#define NATIVE_FRAMES_PER_PROGRAM 5
+// The number of native frames unwind_native() handles before returning to
+// unwind_loop(). Every iteration is unrolled into the function the verifier
+// checks, and unwind_native's share of the complexity limit is the one that
+// grows fastest with it, so this stays small; the depth it used to buy comes
+// from MAX_UNWIND_ITERATIONS instead.
+#define NATIVE_FRAMES_PER_PROGRAM 2
 
 // Record a native frame
 static EBPF_INLINE ErrorCode

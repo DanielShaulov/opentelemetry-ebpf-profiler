@@ -73,9 +73,16 @@ func TestDisableVMAHelperCalls(t *testing.T) {
 	}
 
 	require.Equal(t, 3, disableVMAHelperCalls(coll))
-	require.Equal(t, asm.FnMapLookupElem.Call(), coll.Programs["prog"].Instructions[0])
-	require.Nil(t, btf.FuncMetadata(&coll.Programs["prog"].Instructions[0]))
-	require.Nil(t, coll.Programs["prog"].Instructions[0].Source())
+
+	// The ext infos of everything that survives have to survive with it. The
+	// unwinders are BPF global functions and it is their func_info record that
+	// carries the BTF_FUNC_GLOBAL linkage telling the verifier to check each of
+	// them once on its own; without it they are re-walked at every dispatch in
+	// unwind_loop and the entry programs exceed the complexity limit.
+	require.Equal(t, keep, coll.Programs["prog"].Instructions[0])
+	require.NotNil(t, btf.FuncMetadata(&coll.Programs["prog"].Instructions[0]))
+	require.NotNil(t, coll.Programs["prog"].Instructions[0].Source())
+
 	require.Equal(t, asm.LoadImm(asm.R3, 0, asm.DWord), coll.Programs["prog"].Instructions[1])
 	require.Equal(t, asm.Mov.Imm(asm.R0, -int32(unix.ENOTSUP)).WithMetadata(findVMA.Metadata),
 		coll.Programs["prog"].Instructions[2])
@@ -105,5 +112,21 @@ func TestDisableVMAHelperCallsOnEmbeddedCollection(t *testing.T) {
 			require.NotEqualf(t, asm.FnFindVma, asm.BuiltinFunc(ins.Constant),
 				"%s still calls bpf_find_vma at instruction %d", progName, i)
 		}
+	}
+
+	// Patching must not cost the unwinders their func_info. See the comment in
+	// TestDisableVMAHelperCalls: it is what marks them global to the verifier.
+	for _, unwinder := range []string{"unwind_native", "unwind_python", "unwind_stop"} {
+		var found bool
+		iter := coll.Programs["native_tracer_entry"].Instructions.Iterate()
+		for iter.Next() {
+			if iter.Ins.Symbol() != unwinder {
+				continue
+			}
+			found = true
+			require.NotNilf(t, btf.FuncMetadata(iter.Ins),
+				"%s lost its func_info and is no longer a global function", unwinder)
+		}
+		require.Truef(t, found, "native_tracer_entry does not contain %s", unwinder)
 	}
 }

@@ -54,15 +54,17 @@ trap 'rm -f "${tmpobj}"' EXIT
 "${LLC}" -march=bpf -mcpu="${mcpu}" -filetype=obj -stack-size-section \
   "${bitcode}" -o "${tmpobj}"
 
-# Function -> section, start offset and length. objdump prints, per symbol:
+# Function -> binding, section, start offset and length. objdump prints, per
+# symbol:
 #   0000000000000000 g     F .text  0000000000000128 unwind_native
-declare -A section_of start_of end_of
-while read -r name section start size; do
+declare -A binding_of section_of start_of end_of
+while read -r name binding section start size; do
+  binding_of["${name}"]="${binding}"
   section_of["${name}"]="${section}"
   start_of["${name}"]=$((16#${start}))
   end_of["${name}"]=$((16#${start} + 16#${size}))
 done < <("${objdump}" --syms "${tmpobj}" |
-  awk '/[[:space:]]F[[:space:]]/ { print $NF, $(NF-2), $1, $(NF-1) }')
+  awk '/[[:space:]]F[[:space:]]/ { print $NF, $2, $(NF-2), $1, $(NF-1) }')
 
 # llvm-readobj --stack-sizes prints, per function:
 #   Entry {
@@ -109,10 +111,15 @@ round_up() { echo $(((($1 + frame_align - 1) / frame_align) * frame_align)); }
 # relocation names is exactly that case - an unreferenced local would have been
 # dropped by the compiler. The verifier walks into callbacks too, so charge the
 # largest of them to every chain.
+#
+# Unreferenced *global* functions are the opposite case: the loader only pulls
+# the subprograms an entry point can reach into the program it hands the kernel,
+# so one nothing calls is never loaded and costs nothing.
 callback_cost=0
 callback_fn=""
 for fn in "${!size_of[@]}"; do
   [[ "${section_of[${fn}]:-?}" == ".text" ]] || continue
+  [[ "${binding_of[${fn}]:-g}" == "l" ]] || continue
   referenced=0
   for caller in "${!callees_of[@]}"; do
     [[ " ${callees_of[${caller}]} " == *" ${fn} "* ]] && referenced=1 && break

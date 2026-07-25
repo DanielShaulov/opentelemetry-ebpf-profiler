@@ -392,9 +392,13 @@ typedef enum TracePrograms {
 // leaves two unwinders handing the trace back and forth cannot spin.
 //
 // This replaces the old cap of 29 tail calls, which existed because the kernel
-// allows at most 33 in a chain. Raising it costs verifier budget in the entry
-// programs (the loop body is walked once per iteration) but nothing at runtime.
-#define MAX_UNWIND_ITERATIONS 64
+// allows at most 33 in a chain. It is much higher because it is much cheaper:
+// the unwinders are global functions, so the verifier checks each of them once
+// and then only has to walk the handful of instructions in the loop body, whose
+// states converge after the first iteration. Measured on 5.10, raising this
+// from 32 to 256 does not change the instruction count the verifier reports at
+// all, which is what makes the small batch sizes affordable.
+#define MAX_UNWIND_ITERATIONS 128
 
 // Flags returned by unwind_stop(), telling the entry program what is left to do.
 // unwind_stop is a global function and has no program context, so anything that

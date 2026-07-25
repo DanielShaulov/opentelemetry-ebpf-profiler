@@ -9,9 +9,16 @@
 
 // Number of loop iterations in unwind_python. Each iteration handles either
 // a Python or a native frame, so the name follows the *_FRAMES_PER_PROGRAM
-// convention of the other tracers even though it covers both. 10 fits the
-// 5.x / 6.0-6.5 verifier; the host agent bumps it to 15 on 6.6+.
-BPF_RODATA_VAR(u32, python_frames_per_program, 10)
+// convention of the other tracers even though it covers both.
+//
+// This used to be a load time variable, raised on kernels whose verifier could
+// afford the extra unrolled iterations, because the batch size was what decided
+// how deep a Python stack could be unwound: the unwinder got at most 29 tail
+// calls. It no longer is. unwind_loop() calls the unwinder up to
+// MAX_UNWIND_ITERATIONS times, which costs the verifier nothing, so depth comes
+// from the iteration count and the batch size only trades a little dispatch
+// overhead against verifier budget shared with every other unwinder.
+#define PYTHON_FRAMES_PER_PROGRAM 2
 
 // Forward declaration to avoid warnings like
 // "declaration of 'struct pt_regs' will not be visible outside of this function [-Wvisibility]".
@@ -350,7 +357,7 @@ EBPF_GLOBAL int unwind_python(u32 rec_idx)
   {
     void *py_frame = record->pythonUnwindState.py_frame;
 
-    for (u32 t = 0; t < python_frames_per_program; t++) {
+    for (u32 t = 0; t < PYTHON_FRAMES_PER_PROGRAM; t++) {
       // clang-format off
       switch (unwinder) {
       case PROG_UNWIND_PYTHON:
