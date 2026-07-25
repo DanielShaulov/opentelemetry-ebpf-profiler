@@ -410,14 +410,11 @@ push_frame:
 // or interpreter dispatcher. It does not reset the trace object and will append the
 // dotnet stack frames to the trace object for the current CPU.
 static EBPF_INLINE int unwind_dotnet_core(
-  struct pt_regs *ctx,
-  u8 unwinder_program,
-  int frames_per_program,
-  find_code_start_f find_code_start)
+  u32 rec_idx, u8 unwinder_program, int frames_per_program, find_code_start_f find_code_start)
 {
-  PerCPURecord *record = get_per_cpu_record();
+  PerCPURecord *record = get_per_cpu_record(rec_idx);
   if (!record) {
-    return -1;
+    return PROG_UNWIND_STOP;
   }
 
   Trace *trace = &record->trace;
@@ -455,21 +452,17 @@ static EBPF_INLINE int unwind_dotnet_core(
 
 exit:
   record->state.unwind_error = error;
-  tail_call(ctx, unwinder);
-  DEBUG_PRINT("dotnet: tail call for next frame unwinder (%d) failed", unwinder);
-  return -1;
+  return unwinder;
 }
 
-static EBPF_INLINE int unwind_dotnet(struct pt_regs *ctx)
+EBPF_GLOBAL int unwind_dotnet(u32 rec_idx)
 {
   return unwind_dotnet_core(
-    ctx, PROG_UNWIND_DOTNET, DOTNET_FRAMES_PER_PROGRAM, dotnet_find_code_start);
+    rec_idx, PROG_UNWIND_DOTNET, DOTNET_FRAMES_PER_PROGRAM, dotnet_find_code_start);
 }
-MULTI_USE_FUNC(unwind_dotnet)
 
-static EBPF_INLINE int unwind_dotnet10(struct pt_regs *ctx)
+EBPF_GLOBAL int unwind_dotnet10(u32 rec_idx)
 {
   return unwind_dotnet_core(
-    ctx, PROG_UNWIND_DOTNET10, DOTNET10_FRAMES_PER_PROGRAM, dotnet10_find_code_start);
+    rec_idx, PROG_UNWIND_DOTNET10, DOTNET10_FRAMES_PER_PROGRAM, dotnet10_find_code_start);
 }
-MULTI_USE_FUNC(unwind_dotnet10)

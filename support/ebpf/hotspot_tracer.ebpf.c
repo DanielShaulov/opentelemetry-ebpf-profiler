@@ -914,11 +914,11 @@ hotspot_unwind_one_frame(PerCPURecord *record, HotspotProcInfo *ji, bool maybe_t
 // unwind_hotspot is the entry point for tracing when invoked from the native tracer
 // and it recursive unwinds all HotSpot frames and then jumps back to unwind further
 // native frames that follow.
-static EBPF_INLINE int unwind_hotspot(struct pt_regs *ctx)
+EBPF_GLOBAL int unwind_hotspot(u32 rec_idx)
 {
-  PerCPURecord *record = get_per_cpu_record();
+  PerCPURecord *record = get_per_cpu_record(rec_idx);
   if (!record)
-    return -1;
+    return PROG_UNWIND_STOP;
 
   Trace *trace = &record->trace;
   pid_t pid    = trace->pid;
@@ -949,8 +949,5 @@ static EBPF_INLINE int unwind_hotspot(struct pt_regs *ctx)
 
 exit:
   record->state.unwind_error = error;
-  tail_call(ctx, unwinder);
-  DEBUG_PRINT("jvm: tail call for next frame unwinder (%d) failed", unwinder);
-  return -1;
+  return unwinder;
 }
-MULTI_USE_FUNC(unwind_hotspot)

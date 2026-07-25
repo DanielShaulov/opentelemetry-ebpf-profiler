@@ -9,7 +9,7 @@
 static EBPF_INLINE void send_sample_traces(void *ctx, u64 pid)
 {
   // Use the per CPU record for trace storage: it's too big for stack.
-  PerCPURecord *record = get_pristine_per_cpu_record();
+  PerCPURecord *record = get_pristine_per_cpu_record(PER_CPU_RECORD_PERF);
   if (!record) {
     return; // unreachable
   }

@@ -484,11 +484,11 @@ save_state:
 }
 
 // unwind_ruby is the tail call destination for PROG_UNWIND_RUBY.
-static EBPF_INLINE int unwind_ruby(struct pt_regs *ctx)
+EBPF_GLOBAL int unwind_ruby(u32 rec_idx)
 {
-  PerCPURecord *record = get_per_cpu_record();
+  PerCPURecord *record = get_per_cpu_record(rec_idx);
   if (!record)
-    return -1;
+    return PROG_UNWIND_STOP;
 
   int unwinder           = get_next_unwinder_after_interpreter();
   ErrorCode error        = ERR_OK;
@@ -591,7 +591,5 @@ static EBPF_INLINE int unwind_ruby(struct pt_regs *ctx)
   error = walk_ruby_stack(record, rubyinfo, current_ctx_addr, &unwinder);
 exit:
   record->state.unwind_error = error;
-  tail_call(ctx, unwinder);
-  return -1;
+  return unwinder;
 }
-MULTI_USE_FUNC(unwind_ruby)

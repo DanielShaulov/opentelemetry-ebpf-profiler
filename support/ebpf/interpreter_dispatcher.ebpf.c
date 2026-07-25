@@ -10,24 +10,19 @@
 
 // Begin shared maps
 
-// Per-CPU record of the stack being built and meta-data on the building process
+// Per-CPU records of the stack being built and meta-data on the building process.
+// One slot per PER_CPU_RECORD_*; the probe unwinder gets its own so that a perf
+// sample interrupting an in-flight probe unwind cannot clobber the trace.
+//
+// This used to be two separate maps with the probe programs rewritten at load
+// time to reference the second one. With a single entry point per attachment
+// type the index is just an argument threaded down to get_per_cpu_record().
 struct per_cpu_records_t {
   __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
   __type(key, int);
   __type(value, PerCPURecord);
-  __uint(max_entries, 1);
+  __uint(max_entries, NUM_PER_CPU_RECORDS);
 } per_cpu_records SEC(".maps");
-
-// per_cpu_records_kp is a second per-CPU record used by the probe unwinder.
-// At load time loadProbeUnwinders repoints its get_per_cpu_record() from
-// per_cpu_records to this map, so a perf sampler interrupting an in-flight uprobe
-// unwind (uprobes are not covered by bpf_prog_active) cannot clobber its record.
-struct per_cpu_records_kp_t {
-  __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-  __type(key, int);
-  __type(value, PerCPURecord);
-  __uint(max_entries, 1);
-} per_cpu_records_kp SEC(".maps");
 
 // metrics maps metric ID to a value
 struct metrics_t {
@@ -36,14 +31,6 @@ struct metrics_t {
   __type(value, u64);
   __uint(max_entries, metricID_Max);
 } metrics SEC(".maps");
-
-// perf_progs maps from a program ID to a perf eBPF program
-struct perf_progs_t {
-  __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
-  __type(key, u32);
-  __type(value, u32);
-  __uint(max_entries, NUM_TRACER_PROGS);
-} perf_progs SEC(".maps");
 
 // report_events notifies user space about events (GENERIC_PID).
 //
@@ -210,29 +197,31 @@ static EBPF_INLINE void *go_get_m_ptr(struct GoRuntimeOffsets *offs, UnwindState
   return m_ptr_addr;
 }
 
-static EBPF_INLINE void maybe_add_go_custom_labels(struct pt_regs *ctx, PerCPURecord *record)
+// should_add_go_custom_labels resolves the Go m pointer for the trace and
+// reports whether go_labels() has anything to do. The extraction itself lives in
+// its own global function because the two together exceed the verifier's
+// complexity limit.
+static EBPF_INLINE bool should_add_go_custom_labels(PerCPURecord *record)
 {
   if (go_labels_disabled) {
-    return;
+    return false;
   }
 
   if (record->goOffsets.m_offset == 0) {
     DEBUG_PRINT("cl: no offsets, %d not recognized as a go binary", record->trace.pid);
-    return;
+    return false;
   }
   GoRuntimeOffsets *offsets = &record->goOffsets;
 
   void *m_ptr_addr = go_get_m_ptr(offsets, &record->state);
   if (!m_ptr_addr) {
-    return;
+    return false;
   }
   record->customLabelsState.go_m_ptr = m_ptr_addr;
 
   DEBUG_PRINT("cl: trace is within a process with Go custom labels enabled");
   increment_metric(metricID_UnwindGoLabelsAttempts);
-  // The Go label extraction code is too big to fit in the UNWIND_STOP program, so
-  // it is tail_call'd.
-  tail_call(ctx, PROG_GO_LABELS);
+  return true;
 }
 
 // Implements the specification to share span/trace IDs according to:
@@ -304,12 +293,18 @@ static EBPF_INLINE void maybe_add_apm_info(Trace *trace)
     corr_buf.trace_flags);
 }
 
-// unwind_stop is the tail call destination for PROG_UNWIND_STOP.
-static EBPF_INLINE int unwind_stop(struct pt_regs *ctx)
+// unwind_stop finalizes a trace once no unwinder wants to run any more.
+//
+// It returns a mask of UNWIND_STOP_* rather than sending the trace itself: as a
+// global function it has no program context, and both notifying userspace about
+// a PID and the Go label extraction need one or need to stay out of this
+// function's verifier budget. unwind_loop() acts on the mask.
+EBPF_GLOBAL int unwind_stop(u32 rec_idx)
 {
-  PerCPURecord *record = get_per_cpu_record();
+  PerCPURecord *record = get_per_cpu_record(rec_idx);
   if (!record)
-    return -1;
+    return UNWIND_STOP_DROP;
+  int flags          = 0;
   Trace *trace       = &record->trace;
   UnwindState *state = &record->state;
 
@@ -345,8 +340,9 @@ static EBPF_INLINE int unwind_stop(struct pt_regs *ctx)
     break;
   case metricID_UnwindNativeErrWrongTextSection:;
     u64 pid_tgid = (u64)trace->pid << 32 | trace->tid;
-    if (report_pid(ctx, pid_tgid, record->ratelimitAction)) {
+    if (queue_pid_event(pid_tgid, record->ratelimitAction)) {
       increment_metric(metricID_NumUnknownPC);
+      flags |= UNWIND_STOP_REPORT_PID;
     }
     // fallthrough
   default: increment_metric(state->error_metric);
@@ -364,18 +360,31 @@ static EBPF_INLINE int unwind_stop(struct pt_regs *ctx)
   // this is trivial.
   if (trace->frame_data_len == 1 && state->unwind_error) {
     if (filter_error_frames) {
-      return 0;
+      return flags | UNWIND_STOP_DROP;
     }
   }
   // TEMPORARY HACK END
 
-  // Must be last since it may not return (it will call send_trace).
-  maybe_add_go_custom_labels(ctx, record);
+  if (should_add_go_custom_labels(record)) {
+    flags |= UNWIND_STOP_GO_LABELS;
+  }
 
-  send_trace(ctx, trace);
+  return flags;
+}
 
+// trace_send hands the finished trace to userspace.
+//
+// A global function of its own rather than a call at the end of unwind_stop or
+// go_labels, so that the trace is sent from exactly one place no matter which
+// of them ran.
+EBPF_GLOBAL int trace_send(u32 rec_idx)
+{
+  PerCPURecord *record = get_per_cpu_record(rec_idx);
+  if (!record)
+    return -1;
+
+  send_trace(NULL, &record->trace);
   return 0;
 }
-MULTI_USE_FUNC(unwind_stop)
 
 char _license[] SEC("license") = "GPL";

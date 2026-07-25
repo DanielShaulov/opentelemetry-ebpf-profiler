@@ -218,7 +218,7 @@ enum {
   metricID_UnwindPythonErrBadCFrameFrameAddr,
 
   // number of times stack unwinding was stopped to not exceed the limit of tail calls
-  metricID_MaxTailCalls,
+  metricID_MaxUnwindIterations,
 
   // number of times we didn't find an entry for this process in the Python process info array
   metricID_UnwindPythonErrNoProcInfo,
@@ -360,8 +360,9 @@ enum {
   metricID_Max
 };
 
-// TracePrograms provide the offset for each eBPF trace program in the
-// map that holds them.
+// TracePrograms identifies an unwinder. Unwinders return the id of the unwinder
+// that should handle the next frame, and unwind_dispatch() turns that id back
+// into a call. See unwinders.h.
 // The values of this enum must fit in a single byte.
 typedef enum TracePrograms {
   PROG_UNWIND_STOP,
@@ -379,6 +380,42 @@ typedef enum TracePrograms {
   PROG_UNWIND_LUAJIT,
   NUM_TRACER_PROGS,
 } TracePrograms;
+
+// Returned by collect_trace() when there is nothing to report at all, as
+// opposed to PROG_UNWIND_STOP which means unwinding finished and the trace
+// should be sent. Not part of TracePrograms because it is never dispatched.
+#define PROG_UNWIND_NO_TRACE (-1)
+
+// Upper bound on how many times unwind_loop() may call an unwinder for a single
+// trace. Unwinders process several frames per call, so this is not a frame
+// limit; it exists so the loop is bounded for the verifier and so a bug that
+// leaves two unwinders handing the trace back and forth cannot spin.
+//
+// This replaces the old cap of 29 tail calls, which existed because the kernel
+// allows at most 33 in a chain. Raising it costs verifier budget in the entry
+// programs (the loop body is walked once per iteration) but nothing at runtime.
+#define MAX_UNWIND_ITERATIONS 64
+
+// Flags returned by unwind_stop(), telling the entry program what is left to do.
+// unwind_stop is a global function and has no program context, so anything that
+// needs one has to be handed back to the caller.
+//
+// Userspace has to be told about this PID; the entry program must call
+// event_send_trigger(), which needs a context for bpf_perf_event_output.
+#define UNWIND_STOP_REPORT_PID (1U << 0)
+// The trace was filtered out and must not be sent.
+#define UNWIND_STOP_DROP       (1U << 1)
+// Go custom labels should be collected before sending.
+#define UNWIND_STOP_GO_LABELS  (1U << 2)
+
+// Slots in the per_cpu_records map.
+//
+// The probe unwinder gets a record of its own because uprobes are not covered
+// by bpf_prog_active: a perf sample can interrupt an in-flight probe unwind, and
+// sharing one record would let it clobber the half-built trace.
+#define PER_CPU_RECORD_PERF  0
+#define PER_CPU_RECORD_PROBE 1
+#define NUM_PER_CPU_RECORDS  2
 
 // Maximum number of unique stack deltas needed on a system. This is based on
 // normal desktop /usr/bin/* and /usr/lib/*.so having about 9700 unique deltas.
@@ -882,9 +919,6 @@ typedef struct PerCPURecord {
   };
   // Mask to indicate which unwinders are complete
   u32 unwindersDone;
-
-  // tailCalls tracks the number of calls to bpf_tail_call().
-  u8 tailCalls;
 
   // ratelimitAction determines the PID event rate limiting mode
   u8 ratelimitAction;

@@ -180,10 +180,12 @@ static EBPF_INLINE bool get_go_custom_labels(PerCPURecord *record)
   return get_go_custom_labels_from_map(record, labels_ptr);
 }
 
-// go_labels is the entrypoint for extracting custom labels from Go runtime.
-static EBPF_INLINE int go_labels(struct pt_regs *ctx)
+// go_labels extracts custom labels from the Go runtime into the trace. Called
+// by unwind_loop() when unwind_stop() returns UNWIND_STOP_GO_LABELS, which is
+// also what resolves customLabelsState.go_m_ptr for us.
+EBPF_GLOBAL int go_labels(u32 rec_idx)
 {
-  PerCPURecord *record = get_per_cpu_record();
+  PerCPURecord *record = get_per_cpu_record(rec_idx);
   if (!record)
     return -1;
 
@@ -201,7 +203,5 @@ static EBPF_INLINE int go_labels(struct pt_regs *ctx)
     increment_metric(metricID_UnwindGoLabelsFailures);
   }
 
-  send_trace(ctx, &record->trace);
   return 0;
 }
-MULTI_USE_FUNC(go_labels)

@@ -19,8 +19,8 @@ typedef enum ErrorCode {
   // Deprecated: Failed to lookup entry in the per-CPU frame list
   ERR_LOOKUP_PER_CPU_FRAME_LIST = 4,
 
-  // Maximum number of tail calls was reached
-  ERR_MAX_TAIL_CALLS = 5,
+  // Maximum number of unwinder invocations for a single trace was reached
+  ERR_MAX_UNWIND_ITERATIONS = 5,
 
   // Hotspot: Failure to get CodeBlob address (no heap or bad segmap)
   ERR_HOTSPOT_NO_CODEBLOB = 1000,

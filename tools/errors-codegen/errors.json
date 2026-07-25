@@ -27,8 +27,8 @@
   },
   {
     "id": 5,
-    "name": "max_tail_calls",
-    "description": "Maximum number of tail calls was reached"
+    "name": "max_unwind_iterations",
+    "description": "Maximum number of unwinder invocations for a single trace was reached"
   },
   {
     "id": 1000,

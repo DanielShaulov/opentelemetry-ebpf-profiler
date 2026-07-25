@@ -139,15 +139,15 @@ found_pc:
 // unwind_beam is the entry point for tracing when invoked from the native tracer
 // or interpreter dispatcher. It does not reset the trace object and will append the
 // BEAM stack frames to the trace object for the current CPU.
-static EBPF_INLINE int unwind_beam(struct pt_regs *ctx)
+EBPF_GLOBAL int unwind_beam(u32 rec_idx)
 {
   int unwinder    = PROG_UNWIND_STOP;
   ErrorCode error = ERR_OK;
 
-  PerCPURecord *record = get_per_cpu_record();
+  PerCPURecord *record = get_per_cpu_record(rec_idx);
   if (!record) {
     DEBUG_PRINT("beam: no PerCPURecord found");
-    return -1;
+    return PROG_UNWIND_STOP;
   }
 
   Trace *trace       = &record->trace;
@@ -238,9 +238,5 @@ static EBPF_INLINE int unwind_beam(struct pt_regs *ctx)
 
 exit:
   state->unwind_error = error;
-  tail_call(ctx, unwinder);
-  DEBUG_PRINT("beam: tail call for next frame unwinder (%d) failed", unwinder);
-  return -1;
+  return unwinder;
 }
-
-MULTI_USE_FUNC(unwind_beam)

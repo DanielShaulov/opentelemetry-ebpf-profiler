@@ -4,9 +4,7 @@
 #define OPTI_EXTMAPS_H
 
 // References to map definitions in *.ebpf.c.
-extern struct perf_progs_t perf_progs;
 extern struct per_cpu_records_t per_cpu_records;
-extern struct per_cpu_records_kp_t per_cpu_records_kp;
 extern struct pid_page_to_mapping_info_t pid_page_to_mapping_info;
 extern struct metrics_t metrics;
 extern struct report_events_t report_events;

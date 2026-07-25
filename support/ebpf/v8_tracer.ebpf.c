@@ -316,11 +316,11 @@ frame_done:;
 // unwind_v8 is the entry point for tracing when invoked from the native tracer
 // or interpreter dispatcher. It does not reset the trace object and will append the
 // V8 stack frames to the trace object for the current CPU.
-static EBPF_INLINE int unwind_v8(struct pt_regs *ctx)
+EBPF_GLOBAL int unwind_v8(u32 rec_idx)
 {
-  PerCPURecord *record = get_per_cpu_record();
+  PerCPURecord *record = get_per_cpu_record(rec_idx);
   if (!record) {
-    return -1;
+    return PROG_UNWIND_STOP;
   }
 
   Trace *trace = &record->trace;
@@ -362,8 +362,5 @@ static EBPF_INLINE int unwind_v8(struct pt_regs *ctx)
 
 exit:
   record->state.unwind_error = error;
-  tail_call(ctx, unwinder);
-  DEBUG_PRINT("v8: tail call for next frame unwinder (%d) failed", unwinder);
-  return -1;
+  return unwinder;
 }
-MULTI_USE_FUNC(unwind_v8)

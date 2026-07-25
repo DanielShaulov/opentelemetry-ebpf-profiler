@@ -9,29 +9,6 @@
 #include "frametypes.h"
 #include "types.h"
 
-#if defined(TESTING_COREDUMP)
-
-  #define MULTI_USE_FUNC(func_name)
-
-#else // TESTING_COREDUMP
-
-  // MULTI_USE_FUNC generates perf event and kprobe eBPF programs
-  // for a given function.
-  #define MULTI_USE_FUNC(func_name)                                                                \
-    SEC("perf_event/" #func_name)                                                                  \
-    static int EBPF_INLINE perf_##func_name(struct pt_regs *ctx)                                   \
-    {                                                                                              \
-      return func_name(ctx);                                                                       \
-    }                                                                                              \
-                                                                                                   \
-    SEC("kprobe/" #func_name)                                                                      \
-    static int EBPF_INLINE kprobe_##func_name(struct pt_regs *ctx)                                 \
-    {                                                                                              \
-      return func_name(ctx);                                                                       \
-    }
-
-#endif // TESTING_COREDUMP
-
 #define DEBUG_UNWIND_STATE(state)                                                                  \
   DEBUG_PRINT("pc: %llx sp: %llx fp: %llx", (state)->pc, (state)->sp, (state)->fp)
 
@@ -218,10 +195,16 @@ static inline EBPF_INLINE bool pid_event_ratelimit(u32 pid, int ratelimit_action
   return false;
 }
 
-// report_pid informs userspace about a PID that needs to be processed.
+// queue_pid_event records a PID in maps/pid_events for userspace to process.
 // See pid_event_ratelimit for ratelimit_action functional specifics.
-// Returns true if the PID was successfully reported to user space.
-static inline EBPF_INLINE bool report_pid(void *ctx, u64 pid_tgid, int ratelimit_action)
+// Returns true if the PID was queued, in which case the caller still owes
+// userspace a notification via event_send_trigger.
+//
+// Split from the notification because event_send_trigger needs the program
+// context for bpf_perf_event_output, and the unwinders are global functions
+// that do not get one. They return UNWIND_STOP_REPORT_PID instead and the entry
+// program sends the notification on their behalf.
+static inline EBPF_INLINE bool queue_pid_event(u64 pid_tgid, int ratelimit_action)
 {
   u32 pid = pid_tgid >> 32;
 
@@ -241,7 +224,18 @@ static inline EBPF_INLINE bool report_pid(void *ctx, u64 pid_tgid, int ratelimit
     bpf_map_delete_elem(&reported_pids, &pid);
   }
 
-  // Notify userspace that there is a PID waiting to be processed.
+  return true;
+}
+
+// report_pid informs userspace about a PID that needs to be processed.
+// Returns true if the PID was successfully reported to user space.
+// Only callable from a program that has a context; see queue_pid_event.
+static inline EBPF_INLINE bool report_pid(void *ctx, u64 pid_tgid, int ratelimit_action)
+{
+  if (!queue_pid_event(pid_tgid, ratelimit_action)) {
+    return false;
+  }
+
   // At this point, the PID was successfully written to maps/pid_events,
   // therefore there is no need to track success/failure of event_send_trigger
   // and we can simply return success.
@@ -249,24 +243,25 @@ static inline EBPF_INLINE bool report_pid(void *ctx, u64 pid_tgid, int ratelimit
   return true;
 }
 
-// Return the per-cpu record.
-// As each per-cpu array only has 1 entry, we hard-code 0 as the key.
-// The return value of get_per_cpu_record() can never be NULL and return value checks only exist
+// Return the per-cpu record in slot rec_idx, one of the PER_CPU_RECORD_* indices.
+// The return value can never be NULL for a valid index; the checks on it only exist
 // to pass the verifier. If the implementation of get_per_cpu_record() is changed so that NULL can
 // be returned, also add an error metric.
-static inline EBPF_INLINE PerCPURecord *get_per_cpu_record(void)
+static inline EBPF_INLINE PerCPURecord *get_per_cpu_record(u32 rec_idx)
 {
-  int key0 = 0;
-  return bpf_map_lookup_elem(&per_cpu_records, &key0);
+  if (rec_idx >= NUM_PER_CPU_RECORDS) {
+    return NULL;
+  }
+  return bpf_map_lookup_elem(&per_cpu_records, &rec_idx);
 }
 
 // Return the per-cpu record initialized with pristine values for state variables.
 // The return value of get_pristine_per_cpu_record() can never be NULL and return value checks
 // only exist to pass the verifier. If the implementation of get_pristine_per_cpu_record() is
 // changed so that NULL can be returned, also add an error metric.
-static inline EBPF_INLINE PerCPURecord *get_pristine_per_cpu_record()
+static inline EBPF_INLINE PerCPURecord *get_pristine_per_cpu_record(u32 rec_idx)
 {
-  PerCPURecord *record = get_per_cpu_record();
+  PerCPURecord *record = get_per_cpu_record(rec_idx);
   if (!record)
     return record;
 
@@ -282,7 +277,6 @@ static inline EBPF_INLINE PerCPURecord *get_pristine_per_cpu_record()
   record->rubyUnwindState.last_stack_frame  = 0;
   record->rubyUnwindState.cfunc_saved_frame = 0;
   record->unwindersDone                     = 0;
-  record->tailCalls                         = 0;
   record->ratelimitAction                   = RATELIMIT_ACTION_DEFAULT;
   record->usesAnonymousMappings             = false;
   record->customLabelsState.go_m_ptr        = NULL;
@@ -740,33 +734,6 @@ static inline EBPF_INLINE int get_next_unwinder_after_interpreter()
   return PROG_UNWIND_NATIVE;
 }
 
-// tail_call is a wrapper around bpf_tail_call() and ensures that the number of tail calls is not
-// reached while unwinding the stack.
-static inline EBPF_INLINE void tail_call(void *ctx, int next)
-{
-  PerCPURecord *record = get_per_cpu_record();
-  if (!record) {
-    bpf_tail_call(ctx, &perf_progs, PROG_UNWIND_STOP);
-    // In theory bpf_tail_call() should never return. But due to instruction reordering by the
-    // compiler we have to place return here to bribe the verifier to accept this.
-    return;
-  }
-
-  if (record->tailCalls >= 29) {
-    // The maximum tail call count we need to support on older kernels is 32. At this point
-    // there is a chance that continuing unwinding the stack would further increase the number of
-    // tail calls. As a result we might lose the unwound stack as no further tail calls are left
-    // to report it to user space. To make sure we do not run into this issue we stop unwinding
-    // the stack at this point and report it to userspace.
-    next                       = PROG_UNWIND_STOP;
-    record->state.unwind_error = ERR_MAX_TAIL_CALLS;
-    increment_metric(metricID_MaxTailCalls);
-  }
-  record->tailCalls += 1;
-
-  bpf_tail_call(ctx, &perf_progs, next);
-}
-
 #ifndef __USER32_CS
   // defined in arch/x86/include/asm/segment.h
   #define GDT_ENTRY_DEFAULT_USER32_CS 4
@@ -921,20 +888,27 @@ get_usermode_regs(struct pt_regs *ctx, PerCPURecord *record, bool *has_usermode_
 
 #endif // TESTING_COREDUMP
 
-static inline EBPF_INLINE int
-collect_trace(struct pt_regs *ctx, u16 origin, u32 pid, u32 tid, u64 trace_timestamp, u64 value)
+// collect_trace prepares the per-CPU record for a new trace and returns the
+// unwinder that should process the first frame, or PROG_UNWIND_NO_TRACE if
+// there is nothing to unwind and no trace to report.
+//
+// The caller drives the unwinders from here with unwind_loop(); collect_trace
+// does not do it itself so that the loop and the reporting stay in one place
+// shared by all three entry points.
+static inline EBPF_INLINE int collect_trace(
+  struct pt_regs *ctx, u32 rec_idx, u16 origin, u32 pid, u32 tid, u64 trace_timestamp, u64 value)
 {
   // Only continue processing the trace with a valid origin.
   if (origin == 0) {
-    return -1;
+    return PROG_UNWIND_NO_TRACE;
   }
 
   // The trace is reused on each call to this function so we have to reset the
   // variables used to maintain state.
   DEBUG_PRINT("Resetting CPU record");
-  PerCPURecord *record = get_pristine_per_cpu_record();
+  PerCPURecord *record = get_pristine_per_cpu_record(rec_idx);
   if (!record) {
-    return -1;
+    return PROG_UNWIND_NO_TRACE;
   }
 
   Trace *trace  = &record->trace;
@@ -951,8 +925,8 @@ collect_trace(struct pt_regs *ctx, u16 origin, u32 pid, u32 tid, u64 trace_times
   push_kernel_frames(ctx, trace);
 
   if (pid == 0) {
-    tail_call(ctx, PROG_UNWIND_STOP);
-    return 0;
+    // Kernel thread: the kernel frames pushed above are the whole trace.
+    return PROG_UNWIND_STOP;
   }
 
   // Preload this trace's go_procs entry into record->goOffsets.
@@ -971,11 +945,13 @@ collect_trace(struct pt_regs *ctx, u16 origin, u32 pid, u32 tid, u64 trace_times
 
   PIDPageMappingInfo *pidInfo = pid_information(pid);
   if (!pidInfo) {
+    // Nothing is known about this process yet. Ask userspace to look at it and
+    // drop the trace: without the mappings there is nothing to unwind against.
     u64 pid_tgid = (u64)pid << 32 | tid;
     if (report_pid(ctx, pid_tgid, RATELIMIT_ACTION_DEFAULT)) {
       increment_metric(metricID_NumProcNew);
     }
-    return 0;
+    return PROG_UNWIND_NO_TRACE;
   }
 
   DEBUG_UNWIND_STATE(&record->state);
@@ -986,9 +962,7 @@ collect_trace(struct pt_regs *ctx, u16 origin, u32 pid, u32 tid, u64 trace_times
 
 exit:
   record->state.unwind_error = error;
-  tail_call(ctx, unwinder);
-  DEBUG_PRINT("bpf_tail call failed for %d in native_tracer_entry", unwinder);
-  return -1;
+  return unwinder;
 }
 
 #endif

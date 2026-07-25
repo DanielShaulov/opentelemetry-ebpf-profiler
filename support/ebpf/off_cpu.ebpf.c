@@ -1,14 +1,7 @@
 #include "bpfdefs.h"
 #include "tracemgmt.h"
 #include "types.h"
-
-// kprobe_progs maps from a program ID to a kprobe eBPF program
-struct kprobe_progs_t {
-  __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
-  __type(key, u32);
-  __type(value, u32);
-  __uint(max_entries, NUM_TRACER_PROGS);
-} kprobe_progs SEC(".maps");
+#include "unwinders.h"
 
 // sched_times keeps track of sched_switch call times.
 struct sched_times_t {
@@ -50,18 +43,6 @@ int tracepoint__sched_switch(UNUSED void *ctx)
   return 0;
 }
 
-// kprobe__dummy is never loaded or called. It just makes sure kprobe_progs and
-// per_cpu_records_kp are referenced (both are only used via load-time map rewriting),
-// keeping rewriteMaps and the linker happy.
-SEC("kprobe/dummy")
-int kprobe__dummy(struct pt_regs *ctx)
-{
-  int key = 0;
-  if (bpf_map_lookup_elem(&per_cpu_records_kp, &key))
-    bpf_tail_call(ctx, &kprobe_progs, 0);
-  return 0;
-}
-
 // kp__finish_task_switch is triggered right after the scheduler updated
 // the CPU registers.
 SEC("kprobe/finish_task_switch")
@@ -92,5 +73,11 @@ int finish_task_switch(struct pt_regs *ctx)
   u64 diff = ts - *start_ts;
   DEBUG_PRINT("==== finish_task_switch ====");
 
-  return collect_trace(ctx, origin_id_off_cpu, pid, tid, ts, diff);
+  // Off-CPU unwinding runs from a kprobe, which bpf_prog_active does not protect
+  // against a perf sample landing on top of it, so it uses the probe record.
+  int unwinder = collect_trace(ctx, PER_CPU_RECORD_PROBE, origin_id_off_cpu, pid, tid, ts, diff);
+  if (unwinder != PROG_UNWIND_NO_TRACE) {
+    unwind_loop(ctx, PER_CPU_RECORD_PROBE, unwinder);
+  }
+  return 0;
 }

@@ -1685,10 +1685,10 @@
     "id": 228
   },
   {
-    "description": "Number of times stack unwinding was stopped to not hit the limit of tail calls",
+    "description": "Number of times stack unwinding was stopped after reaching the maximum number of unwinder invocations for a single trace",
     "type": "counter",
-    "name": "MaxTailCalls",
-    "field": "bpf.tail_calls_max",
+    "name": "MaxUnwindIterations",
+    "field": "bpf.unwind_iterations_max",
     "id": 229
   },
   {

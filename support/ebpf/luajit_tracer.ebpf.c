@@ -13,11 +13,11 @@ struct luajit_procs_t {
 } luajit_procs SEC(".maps");
 
 // Unimplemented; just a stub that compiles and references the map.
-static EBPF_INLINE int unwind_luajit([[maybe_unused]] struct pt_regs *ctx)
+EBPF_GLOBAL int unwind_luajit(u32 rec_idx)
 {
-  PerCPURecord *record = get_per_cpu_record();
+  PerCPURecord *record = get_per_cpu_record(rec_idx);
   if (!record)
-    return -1;
+    return PROG_UNWIND_STOP;
 
   u32 pid              = record->trace.pid;
   ErrorCode error      = ERR_UNREACHABLE; // We never run this unwinder.
@@ -31,6 +31,6 @@ static EBPF_INLINE int unwind_luajit([[maybe_unused]] struct pt_regs *ctx)
   increment_metric(metricID_UnwindLuaJITAttempts);
 
 exit:
-  return error;
+  record->state.unwind_error = error;
+  return PROG_UNWIND_STOP;
 }
-MULTI_USE_FUNC(unwind_luajit)

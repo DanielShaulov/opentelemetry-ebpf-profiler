@@ -2,6 +2,7 @@
 #include "frametypes.h"
 #include "tracemgmt.h"
 #include "types.h"
+#include "unwinders.h"
 
 // with_debug_output is set during load time.
 BPF_RODATA_VAR(u32, with_debug_output, 0)
@@ -106,12 +107,12 @@ struct stack_delta_page_to_info_t {
 
 #include "native_stack_trace.h"
 
-// unwind_native is the tail call destination for PROG_UNWIND_NATIVE.
-static EBPF_INLINE int unwind_native(struct pt_regs *ctx)
+// unwind_native unwinds native frames using stack deltas.
+EBPF_GLOBAL int unwind_native(u32 rec_idx)
 {
-  PerCPURecord *record = get_per_cpu_record();
+  PerCPURecord *record = get_per_cpu_record(rec_idx);
   if (!record)
-    return -1;
+    return PROG_UNWIND_STOP;
 
   Trace *trace = &record->trace;
   int unwinder;
@@ -155,12 +156,10 @@ static EBPF_INLINE int unwind_native(struct pt_regs *ctx)
     }
   }
 
-  // Tail call needed for recursion, switching to interpreter unwinder, or reporting
-  // trace due to end-of-trace or error. The unwinder program index is set accordingly.
+  // The returned unwinder continues native unwinding, switches to an interpreter
+  // unwinder, or stops to report the trace due to end-of-trace or error.
   record->state.unwind_error = error;
-  tail_call(ctx, unwinder);
-  DEBUG_PRINT("bpf_tail call failed for %d in unwind_native", unwinder);
-  return -1;
+  return unwinder;
 }
 
 SEC("perf_event/native_tracer_entry")
@@ -175,7 +174,11 @@ int native_tracer_entry(struct bpf_perf_event_data *ctx)
     return 0;
   }
 
-  u64 ts = bpf_ktime_get_ns();
-  return collect_trace((struct pt_regs *)&ctx->regs, origin_id_sampling, pid, tid, ts, 0);
+  u64 ts       = bpf_ktime_get_ns();
+  int unwinder = collect_trace(
+    (struct pt_regs *)&ctx->regs, PER_CPU_RECORD_PERF, origin_id_sampling, pid, tid, ts, 0);
+  if (unwinder != PROG_UNWIND_NO_TRACE) {
+    unwind_loop(ctx, PER_CPU_RECORD_PERF, unwinder);
+  }
+  return 0;
 }
-MULTI_USE_FUNC(unwind_native)
